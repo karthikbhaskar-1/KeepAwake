@@ -1,0 +1,9 @@
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+tools/usage.jsonl
+tools/review_system.txt
+tools/__pycache__/
+tools/*.txt

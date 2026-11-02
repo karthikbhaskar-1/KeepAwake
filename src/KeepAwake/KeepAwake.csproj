@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>9.0</LangVersion>
+    <AssemblyName>KeepAwake</AssemblyName>
+    <RootNamespace>KeepAwake</RootNamespace>
+    <Version>1.0.0</Version>
+    <Authors>Karthik</Authors>
+    <Product>KeepAwake</Product>
+    <Description>Keeps Windows and the screen awake for a chosen time.</Description>
+    <Copyright>Copyright (c) 2026 Karthik</Copyright>
+    <ApplicationIcon>Resources\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Deterministic>true</Deterministic>
+    <Prefer32Bit>false</Prefer32Bit>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\app.ico" LogicalName="app.ico" />
+    <EmbeddedResource Include="Resources\tray_active.ico" LogicalName="tray_active.ico" />
+    <EmbeddedResource Include="Resources\tray_inactive.ico" LogicalName="tray_inactive.ico" />
+  </ItemGroup>
+</Project>

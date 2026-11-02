@@ -1,0 +1,1 @@
+[usage] {"ts": "2026-11-02T17:06:57", "provider": "ollama-evo", "model": "glm-5.3-flash:cloud", "prompt_tokens": 1520, "output_tokens": 1875, "seconds": 10.8, "think_tokens_included": true, "tok_per_s": 174.0}
