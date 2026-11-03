@@ -135,7 +135,7 @@ namespace KeepAwake.Tests
             var json = original.ToJson();
             var copy = Settings.Parse(json);
 
-            Assert.AreEqual("{\"lastDurationMinutes\":1440,\"simulateActivity\":true,\"theme\":\"Light\"}", json);
+            Assert.AreEqual("{\"lastDurationMinutes\":1440,\"lastUntil\":\"\",\"simulateActivity\":true,\"theme\":\"Light\",\"stopOnBattery\":false,\"stopWhenLocked\":false,\"hotkey\":\"Ctrl+Alt+K\"}", json);
             Assert.AreEqual(1440, copy.LastDurationMinutes);
             Assert.IsTrue(copy.SimulateActivity);
             Assert.AreEqual(ThemeMode.Light, copy.ThemeMode);

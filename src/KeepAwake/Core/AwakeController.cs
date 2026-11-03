@@ -18,6 +18,7 @@ namespace KeepAwake.Core
     {
         private readonly IClock _clock;
         private readonly IPowerHold _hold;
+        private bool _warned;
 
         public AwakeController(IClock clock, IPowerHold hold)
         {
@@ -29,6 +30,9 @@ namespace KeepAwake.Core
         public DateTime StartedUtc { get; private set; }
         public DateTime? EndUtc { get; private set; }
         public TimeSpan? Duration { get; private set; }
+
+        /// <summary>Changes on every Activate, Extend and Deactivate, so a captured value identifies one period.</summary>
+        public int PeriodId { get; private set; }
 
         /// <summary>The controller's notion of now (monotonic in the real app).</summary>
         public DateTime UtcNow => _clock.UtcNow;
@@ -56,7 +60,17 @@ namespace KeepAwake.Core
             }
         }
 
+        /// <summary>
+        /// When the "ends in 5 minutes" warning is due, or null when none is pending (inactive, forever, the period
+        /// is shorter than 10 minutes, or the warning already fired for this period).
+        /// </summary>
+        public DateTime? WarningUtc =>
+            IsActive && EndUtc.HasValue && !_warned && Duration.HasValue && Duration.Value >= Schedule.MinPeriodForWarning
+                ? EndUtc.Value - Schedule.WarnBefore
+                : (DateTime?)null;
+
         public event EventHandler StateChanged;
+        public event EventHandler ExpiryWarning;
         public event EventHandler<ExpiredEventArgs> Expired;
 
         public void Activate(TimeSpan? duration)
@@ -68,6 +82,8 @@ namespace KeepAwake.Core
             Duration = duration;
             EndUtc = duration.HasValue ? now + duration.Value : (DateTime?)null;
             State = AwakeState.Active;
+            _warned = false;
+            PeriodId++;
             _hold.Hold();
             StateChanged?.Invoke(this, EventArgs.Empty);
         }
@@ -77,6 +93,7 @@ namespace KeepAwake.Core
         {
             if (!IsActive) { Activate(span); return; }
             if (EndUtc == null) return;
+            PeriodId++;
             if (span == null)
             {
                 EndUtc = null;
@@ -87,6 +104,7 @@ namespace KeepAwake.Core
                 if (span.Value <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(span));
                 EndUtc = EndUtc.Value + span.Value;
                 Duration = EndUtc.Value - StartedUtc;
+                _warned = false;
             }
             StateChanged?.Invoke(this, EventArgs.Empty);
         }
@@ -96,6 +114,7 @@ namespace KeepAwake.Core
             if (!IsActive) return;
             _hold.Release();
             State = AwakeState.Inactive;
+            PeriodId++;
             EndUtc = null;
             Duration = null;
             StateChanged?.Invoke(this, EventArgs.Empty);
@@ -105,7 +124,17 @@ namespace KeepAwake.Core
         public void Tick()
         {
             if (!IsActive || EndUtc == null) return;
-            if (_clock.UtcNow < EndUtc.Value) return;
+            var now = _clock.UtcNow;
+            if (now < EndUtc.Value)
+            {
+                var warn = WarningUtc;
+                if (warn.HasValue && now >= warn.Value)
+                {
+                    _warned = true;
+                    ExpiryWarning?.Invoke(this, EventArgs.Empty);
+                }
+                return;
+            }
             var kept = EndUtc.Value - StartedUtc;
             Deactivate();
             Expired?.Invoke(this, new ExpiredEventArgs(kept));

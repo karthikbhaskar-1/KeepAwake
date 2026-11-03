@@ -8,12 +8,24 @@ namespace KeepAwake.Core
 {
     public enum ThemeMode { System, Light, Dark }
 
-    /// <summary>The three persisted values. Read and written by hand so no serializer assembly is loaded at start-up.</summary>
+    /// <summary>The persisted values. Read and written by hand so no serializer assembly is loaded at start-up.</summary>
     public sealed class Settings
     {
         public int LastDurationMinutes { get; set; } = Durations.DefaultMinutes;
 
+        /// <summary>The remembered until-time as "HH:mm", or empty. LastDurationMinutes is -1 while it is the chosen mode.</summary>
+        public string LastUntil { get; set; } = "";
+
         public bool SimulateActivity { get; set; }
+
+        public bool StopOnBattery { get; set; }
+
+        public bool StopWhenLocked { get; set; }
+
+        /// <summary>Global hotkey text such as "Ctrl+Alt+K"; empty disables it.</summary>
+        public string Hotkey { get; set; } = DefaultHotkey;
+
+        public const string DefaultHotkey = "Ctrl+Alt+K";
 
         public string Theme { get; set; } = "System";
 
@@ -56,12 +68,18 @@ namespace KeepAwake.Core
             catch { return s; }
             if (raw == null) return s;
 
+            if (raw.TryGetValue("lastUntil", out var until) && UntilTime.TryParse(until, out var tod))
+                s.LastUntil = UntilTime.Format(tod);
             if (raw.TryGetValue("lastDurationMinutes", out var minutes)
                 && int.TryParse(minutes, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var m)
-                && m >= 0
-                && (m == Durations.ForeverMinutes || Durations.FromMinutes(m).Minutes == m))
+                && (m == UntilTime.UntilMinutes
+                    ? s.LastUntil.Length > 0
+                    : m >= 0 && (m == Durations.ForeverMinutes || Durations.FromMinutes(m).Minutes == m)))
                 s.LastDurationMinutes = m;
             if (raw.TryGetValue("simulateActivity", out var sim)) s.SimulateActivity = sim == "true";
+            if (raw.TryGetValue("stopOnBattery", out var bat)) s.StopOnBattery = bat == "true";
+            if (raw.TryGetValue("stopWhenLocked", out var lck)) s.StopWhenLocked = lck == "true";
+            if (raw.TryGetValue("hotkey", out var hk)) s.Hotkey = hk.Trim();
             if (raw.TryGetValue("theme", out var theme)) s.ThemeMode = ParseTheme(theme);
             return s;
         }
@@ -69,9 +87,15 @@ namespace KeepAwake.Core
         public string ToJson()
         {
             return "{\"lastDurationMinutes\":" + LastDurationMinutes.ToString(CultureInfo.InvariantCulture)
+                + ",\"lastUntil\":\"" + Escape(LastUntil) + "\""
                 + ",\"simulateActivity\":" + (SimulateActivity ? "true" : "false")
-                + ",\"theme\":\"" + ThemeMode + "\"}";
+                + ",\"theme\":\"" + ThemeMode + "\""
+                + ",\"stopOnBattery\":" + (StopOnBattery ? "true" : "false")
+                + ",\"stopWhenLocked\":" + (StopWhenLocked ? "true" : "false")
+                + ",\"hotkey\":\"" + Escape(Hotkey) + "\"}";
         }
+
+        private static string Escape(string s) => (s ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
 
         /// <summary>Writes to a temp file and swaps it in, so a crash never leaves a truncated settings file.</summary>
         public void Save(string path)

@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using KeepAwake.Core;
 using KeepAwake.Native;
 using KeepAwake.UI.Controls;
@@ -21,6 +22,7 @@ namespace KeepAwake.UI
         private const int CardY = 266, CardH = 56;
         private const int ToggleY = 336, ToggleH = 24;
         private const int ActionH = 46, FooterH = 16;
+        private const int HotkeyId = 1;
         private const string GitHubUrl = "https://github.com/karthikbhaskar-1/KeepAwake";
 
         private readonly AwakeController _controller;
@@ -41,6 +43,10 @@ namespace KeepAwake.UI
         private string _settingsPath;
         private string _lastSavedJson;
         private DurationOption _chosen;
+        private bool _useUntil;
+        private TimeSpan _untilTod;
+        private bool _hotkeyRegistered, _lockWatch, _hotkeyWarned, _popupOpen;
+        private string _hotkeyHint = "";
         private double _shownProgress;
         private bool _allowClose, _shutDown;
         private int _ignoreClicksUntil;
@@ -67,9 +73,18 @@ namespace KeepAwake.UI
             _tray = tray;
             try { _lastSavedJson = System.IO.File.Exists(settingsPath) ? settings.ToJson() : null; } catch { }
             Version = Assembly.GetExecutingAssembly().GetName().Version.ToString(3);
-            _chosen = settings.LastDurationMinutes == Durations.ForeverMinutes
-                ? Durations.All[Durations.All.Count - 1]
-                : Durations.FromMinutes(settings.LastDurationMinutes);
+            if (settings.LastDurationMinutes == UntilTime.UntilMinutes && UntilTime.TryParse(settings.LastUntil, out var tod))
+            {
+                _useUntil = true;
+                _untilTod = tod;
+                _chosen = Durations.FromMinutes(Durations.DefaultMinutes);
+            }
+            else
+            {
+                _chosen = settings.LastDurationMinutes == Durations.ForeverMinutes
+                    ? Durations.All[Durations.All.Count - 1]
+                    : Durations.FromMinutes(settings.LastDurationMinutes);
+            }
 
             Text = "KeepAwake";
             FormBorderStyle = FormBorderStyle.None;
@@ -89,7 +104,7 @@ namespace KeepAwake.UI
             catch { }
 
             _activate = new PillButton { Kind = PillKind.Primary, SplitChevron = true };
-            _activate.Click += (s, e) => { if (ClickAllowed()) StartKeepAwake(_chosen); };
+            _activate.Click += (s, e) => { if (ClickAllowed()) StartFromChoice(); };
             _activate.ChevronClick += (s, e) => { if (ClickAllowed()) ShowMenu(DurationMenu, _activate); };
 
             _extend = new PillButton { Kind = PillKind.Secondary, SplitChevron = true, ChevronWidth = 40, Text = "Extend 1 h", Visible = false };
@@ -106,6 +121,7 @@ namespace KeepAwake.UI
                 _settings.SimulateActivity = _simulate.Checked;
                 SaveSettings();
                 SyncSimulator();
+                UpdateTrayOptions();
             };
 
             _minimize = new GlyphButton { Glyph = Glyph.Minimize };
@@ -117,6 +133,9 @@ namespace KeepAwake.UI
 
             _controller.StateChanged += OnControllerStateChanged;
             _controller.Expired += OnControllerExpired;
+            _controller.ExpiryWarning += OnControllerWarning;
+            _tray.ToggleRequested += OnTrayToggle;
+            _tray.OptionRequested += OnTrayOption;
             _tray.ShowRequested += OnTrayShow;
             _tray.ExtendRequested += OnTrayExtend;
             _tray.DeactivateRequested += OnTrayDeactivate;
@@ -132,11 +151,22 @@ namespace KeepAwake.UI
             LayoutControls();
             OnThemeChanged();
             OnStateChanged();
+            UpdateTrayOptions();
         }
 
         // ----- event handlers (named so they can be unsubscribed) ----------------------
 
         private void OnControllerStateChanged(object s, EventArgs e) => OnStateChanged();
+
+        private void OnControllerWarning(object s, EventArgs e)
+        {
+            int period = _controller.PeriodId;
+            _tray.Toast("KeepAwake ends in 5 minutes", "Click to extend by 1 hour.", () =>
+            {
+                if (_controller.IsActive && !_controller.IsForever && _controller.PeriodId == period)
+                    Extend(Durations.Extend[0]);
+            });
+        }
 
         private void OnControllerExpired(object s, ExpiredEventArgs e) =>
             _tray.Toast("KeepAwake finished", "Kept awake for " + TimeFormat.Duration(e.KeptAwake));
@@ -153,6 +183,32 @@ namespace KeepAwake.UI
         }
 
         private void OnTrayQuit(object s, EventArgs e) => Quit();
+        private void OnTrayToggle(object s, EventArgs e) => ToggleActive();
+
+        private void OnTrayOption(object s, TrayOption option)
+        {
+            switch (option)
+            {
+                case TrayOption.SimulateActivity:
+                    _simulate.Checked = !_simulate.Checked;
+                    return;
+                case TrayOption.StopOnBattery:
+                    _settings.StopOnBattery = !_settings.StopOnBattery;
+                    SaveSettings();
+                    UpdateTrayOptions();
+                    CheckBattery();
+                    return;
+                case TrayOption.StopWhenLocked:
+                    _settings.StopWhenLocked = !_settings.StopWhenLocked;
+                    SaveSettings();
+                    SyncLockWatch();
+                    UpdateTrayOptions();
+                    return;
+            }
+        }
+
+        private void UpdateTrayOptions() =>
+            _tray.SetOptions(_settings.SimulateActivity, _settings.StopOnBattery, _settings.StopWhenLocked);
 
         // ----- lazy menus --------------------------------------------------------------
 
@@ -169,9 +225,13 @@ namespace KeepAwake.UI
                     mi.Click += (s, e) => StartKeepAwake(opt);
                     _durationMenu.Items.Add(mi);
                 }
+                var until = new ToolStripMenuItem("Until a time...") { Tag = "until" };
+                until.Click += (s, e) => BeginInvoke(new Action(AskUntil));
+                _durationMenu.Items.Add(until);
                 _durationMenu.Opening += (s, e) =>
                 {
-                    foreach (ToolStripMenuItem mi in _durationMenu.Items) mi.Checked = mi.Text == _chosen.Label;
+                    foreach (ToolStripMenuItem mi in _durationMenu.Items)
+                        mi.Checked = mi.Tag as string == "until" ? _useUntil : !_useUntil && mi.Text == _chosen.Label;
                 };
                 return _durationMenu;
             }
@@ -201,6 +261,8 @@ namespace KeepAwake.UI
             _tray.EnsureMenu();
             var a = DurationMenu;
             var b = ExtendMenu;
+            UpdateTrayOptions();
+            SyncLockWatch();
         }
 
         // ----- start-up ----------------------------------------------------------------
@@ -306,6 +368,13 @@ namespace KeepAwake.UI
                 LayoutControls();
             }
             WindowChrome.ApplyRoundedCorners(this, 16);
+            RegisterHotkey();
+        }
+
+        protected override void OnHandleDestroyed(EventArgs e)
+        {
+            UnregisterHotkey();
+            base.OnHandleDestroyed(e);
         }
 
         protected override void OnVisibleChanged(EventArgs e)
@@ -350,6 +419,11 @@ namespace KeepAwake.UI
             _shutDown = true;
             _controller.StateChanged -= OnControllerStateChanged;
             _controller.Expired -= OnControllerExpired;
+            _controller.ExpiryWarning -= OnControllerWarning;
+            _tray.ToggleRequested -= OnTrayToggle;
+            _tray.OptionRequested -= OnTrayOption;
+            UnregisterHotkey();
+            if (_lockWatch) { SystemEvents.SessionSwitch -= OnSessionSwitch; _lockWatch = false; }
             _tray.ShowRequested -= OnTrayShow;
             _tray.ExtendRequested -= OnTrayExtend;
             _tray.DeactivateRequested -= OnTrayDeactivate;
@@ -386,8 +460,20 @@ namespace KeepAwake.UI
                     break;
                 case NativeMethods.WM_POWERBROADCAST:
                     if ((int)m.WParam == NativeMethods.PBT_APMRESUMEAUTOMATIC || (int)m.WParam == NativeMethods.PBT_APMRESUMESUSPEND)
+                    {
                         CoreTick();
+                        CheckBattery();
+                    }
+                    else if ((int)m.WParam == NativeMethods.PBT_APMPOWERSTATUSCHANGE)
+                        CheckBattery();
                     break;
+                case NativeMethods.WM_MOUSEACTIVATE when _popupOpen:
+                    m.Result = (IntPtr)NativeMethods.MA_ACTIVATEANDEAT;
+                    return;
+                case NativeMethods.WM_HOTKEY when (int)m.WParam == HotkeyId:
+                    ToggleActive();
+                    m.Result = IntPtr.Zero;
+                    return;
                 case NativeMethods.WM_TIMECHANGE:
                     _sinceText = null;
                     CoreTick();
@@ -461,12 +547,144 @@ namespace KeepAwake.UI
         /// </summary>
         private bool ClickAllowed() => unchecked(Environment.TickCount - _ignoreClicksUntil) >= 0;
 
+        private static bool OnBattery() => SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Offline;
+
+        private void StartFromChoice()
+        {
+            if (_useUntil) StartUntil(_untilTod);
+            else StartKeepAwake(_chosen);
+        }
+
         private void StartKeepAwake(DurationOption d)
         {
+            _useUntil = false;
             _chosen = d;
             _settings.LastDurationMinutes = d.Minutes;
             SaveSettings();
-            _controller.Activate(d.Span);
+            Begin(d.Span);
+        }
+
+        /// <summary>Remembers the time of day and activates until its next occurrence (tomorrow when it is not after now).</summary>
+        private void StartUntil(TimeSpan timeOfDay)
+        {
+            var nowUtc = DateTime.UtcNow;
+            var span = UntilTime.ResolveUtc(nowUtc, timeOfDay, TimeZoneInfo.Local) - nowUtc;
+            _useUntil = true;
+            _untilTod = timeOfDay;
+            _settings.LastDurationMinutes = UntilTime.UntilMinutes;
+            _settings.LastUntil = UntilTime.Format(timeOfDay);
+            SaveSettings();
+            Begin(span);
+        }
+
+        /// <summary>The one place that activates, so the battery rule applies to the button, the menu, the hotkey and the tray click alike.</summary>
+        private void Begin(TimeSpan? span)
+        {
+            _activate.Text = ActivateLabel();
+            if (_settings.StopOnBattery && OnBattery())
+            {
+                _tray.Toast("KeepAwake", "KeepAwake stopped: running on battery");
+                return;
+            }
+            _controller.Activate(span);
+        }
+
+        private string ActivateLabel() =>
+            _useUntil ? "Keep awake until " + UntilTime.Format(_untilTod) : Durations.ActivateLabel(_chosen);
+
+        private void AskUntil()
+        {
+            if (IsDisposed || _shutDown) return;
+            var initial = _useUntil ? _untilTod
+                : UntilTime.TryParse(_settings.LastUntil, out var last) ? last
+                : UntilTime.Suggest(DateTime.Now);
+            _popupOpen = true;
+            bool ok;
+            TimeSpan chosen;
+            try { ok = UntilPopup.Prompt(this, _activate, initial, out chosen); }
+            finally { _popupOpen = false; }
+            if (ok) StartUntil(chosen);
+        }
+
+        private void ToggleActive()
+        {
+            if (_shutDown || _popupOpen) return;
+            if (_controller.IsActive) _controller.Deactivate();
+            else StartFromChoice();
+        }
+
+        private void CheckBattery()
+        {
+            if (_shutDown || !_controller.IsActive || !_settings.StopOnBattery || !OnBattery()) return;
+            _controller.Deactivate();
+            _tray.Toast("KeepAwake", "KeepAwake stopped: running on battery");
+        }
+
+        // ----- stop when locked --------------------------------------------------------
+
+        private void SyncLockWatch()
+        {
+            bool want = _settings.StopWhenLocked && !_shutDown;
+            if (want == _lockWatch) return;
+            _lockWatch = want;
+            if (want) SystemEvents.SessionSwitch += OnSessionSwitch;
+            else SystemEvents.SessionSwitch -= OnSessionSwitch;
+        }
+
+        /// <summary>May run on another thread depending on where it was subscribed; hop to the UI thread before touching the controller.</summary>
+        private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+        {
+            if (e.Reason != SessionSwitchReason.SessionLock) return;
+            try
+            {
+                if (IsHandleCreated && !IsDisposed) BeginInvoke(new Action(StopForLock));
+            }
+            catch (InvalidOperationException) { }
+        }
+
+        private void StopForLock()
+        {
+            if (!_shutDown && _settings.StopWhenLocked && _controller.IsActive) _controller.Deactivate();
+        }
+
+        // ----- global hotkey -----------------------------------------------------------
+
+        private void RegisterHotkey()
+        {
+            UnregisterHotkey();
+            string hint = "";
+            bool first = !_hotkeyWarned;
+            if (!Hotkey.TryParse(_settings.Hotkey, out var hk))
+            {
+                _hotkeyWarned = true;
+                if (first) _tray.Toast("KeepAwake", "Hotkey '" + _settings.Hotkey + "' is not valid; the hotkey is disabled");
+            }
+            else if (!hk.IsNone)
+            {
+                if (NativeMethods.RegisterHotKey(Handle, HotkeyId, hk.Modifiers | NativeMethods.MOD_NOREPEAT, hk.VirtualKey))
+                {
+                    _hotkeyRegistered = true;
+                    hint = hk.ToString();
+                }
+                else
+                {
+                    _hotkeyWarned = true;
+                    if (first) _tray.Toast("KeepAwake", "Hotkey " + hk + " is in use by another app");
+                }
+            }
+            if (hint != _hotkeyHint)
+            {
+                _hotkeyHint = hint;
+                DiscardBgCache();
+                Invalidate();
+            }
+        }
+
+        private void UnregisterHotkey()
+        {
+            if (!_hotkeyRegistered) return;
+            _hotkeyRegistered = false;
+            if (IsHandleCreated) NativeMethods.UnregisterHotKey(Handle, HotkeyId);
         }
 
         private void Extend(DurationOption d) => _controller.Extend(d.Span);
@@ -505,7 +723,7 @@ namespace KeepAwake.UI
             _extend.Visible = active;
             _deactivate.Visible = active;
             _extend.Enabled = !_controller.IsForever;
-            _activate.Text = Durations.ActivateLabel(_chosen);
+            _activate.Text = ActivateLabel();
             if (!active) _shownProgress = 0;
             SyncSimulator();
             _tray.Update(_controller, _settings.ThemeMode);
@@ -529,7 +747,7 @@ namespace KeepAwake.UI
         private void ScheduleCore()
         {
             if (_shutDown) return;
-            int wait = Schedule.NextWakeMs(_controller.IsActive, _controller.UtcNow, _controller.EndUtc, _trayClock.ElapsedMilliseconds);
+            int wait = Schedule.NextWakeMs(_controller.IsActive, _controller.UtcNow, _controller.EndUtc, _trayClock.ElapsedMilliseconds, _controller.WarningUtc);
             if (wait < 0)
             {
                 _coreTimer.Stop();
@@ -566,7 +784,7 @@ namespace KeepAwake.UI
             if (_controller.HoldFailed) return "Windows refused the request";
             if (_controller.IsForever) return "until deactivated";
             var rem = _controller.Remaining.Value;
-            return TimeFormat.Remaining(rem) + "  ·  ends " + TimeFormat.Clock(DateTime.Now + rem);
+            return TimeFormat.Remaining(rem) + "  ·  ends " + TimeFormat.Clock((DateTime.UtcNow + rem).ToLocalTime());
         }
 
         private static string UptimeText() => TimeFormat.Compact(Uptime.Current);
@@ -664,9 +882,14 @@ namespace KeepAwake.UI
 
             // Footer.
             float fy = L(H - 14 - FooterH);
-            Painter.Text(g, "v" + Version + "  ·  by Karthik", Theme.Font(8f), p.Faint, new RectangleF(L(Pad), fy, L(200), L(FooterH)));
             var linkFont = Theme.Font(8f);
             float linkW = Painter.Measure(g, "GitHub", linkFont).Width;
+            var hint = _hotkeyHint.Length > 0 ? "  ·  " + _hotkeyHint : "";
+            var footer = "v" + Version + "  ·  by Karthik" + hint;
+            float footerRoom = L(W - Pad) - linkW - L(4) - L(8) - L(Pad);
+            if (hint.Length > 0 && Painter.Measure(g, footer, linkFont).Width > footerRoom)
+                footer = "v" + Version + hint;
+            Painter.Text(g, footer, linkFont, p.Faint, new RectangleF(L(Pad), fy, Math.Max(footerRoom, L(100)), L(FooterH)));
             // DrawString pads the text, so the box is wider than the typographic measure.
             float linkBox = linkW + L(20);
             var linkRect = new RectangleF(L(W - Pad) + L(2) - linkBox, fy, linkBox, L(FooterH));

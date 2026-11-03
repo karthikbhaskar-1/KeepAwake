@@ -6,13 +6,18 @@ using KeepAwake.Core;
 
 namespace KeepAwake.UI
 {
+    public enum TrayOption { SimulateActivity, StopOnBattery, StopWhenLocked }
+
     /// <summary>Notification-area icon, tooltip, balloon toast and the right-click menu.</summary>
     public sealed class TrayIcon : IDisposable
     {
         private readonly NotifyIcon _icon;
         private readonly Icon _active, _inactive;
         private ContextMenuStrip _menu;
-        private ToolStripMenuItem _show, _extend, _deactivate, _theme, _quit;
+        private ToolStripMenuItem _show, _extend, _deactivate, _options, _theme, _quit;
+        private ToolStripMenuItem _optSimulate, _optBattery, _optLocked;
+        private bool _simulateOn, _batteryOn, _lockedOn;
+        private Action _balloonAction;
 
         private bool _lastActive, _lastForever;
         private ThemeMode _lastTheme = ThemeMode.System;
@@ -24,6 +29,8 @@ namespace KeepAwake.UI
         public event EventHandler DeactivateRequested;
         public event EventHandler<ThemeMode> ThemeRequested;
         public event EventHandler QuitRequested;
+        public event EventHandler ToggleRequested;
+        public event EventHandler<TrayOption> OptionRequested;
 
         public TrayIcon()
         {
@@ -39,8 +46,18 @@ namespace KeepAwake.UI
             // The menu is built on first use (or shortly after start-up), not before the splash.
             _icon.MouseDown += (s, e) => { if (e.Button == MouseButtons.Right) EnsureMenu(); };
             _icon.MouseUp += (s, e) => { if (e.Button == MouseButtons.Right) EnsureMenu(); };
-            _icon.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowRequested?.Invoke(this, EventArgs.Empty); };
-            _icon.DoubleClick += (s, e) => ShowRequested?.Invoke(this, EventArgs.Empty);
+            _icon.MouseClick += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Left) ShowRequested?.Invoke(this, EventArgs.Empty);
+                else if (e.Button == MouseButtons.Middle) ToggleRequested?.Invoke(this, EventArgs.Empty);
+            };
+            _icon.BalloonTipClicked += (s, e) =>
+            {
+                var a = _balloonAction;
+                _balloonAction = null;
+                a?.Invoke();
+            };
+            _icon.MouseDoubleClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowRequested?.Invoke(this, EventArgs.Empty); };
         }
 
         /// <summary>Builds the right-click menu if it does not exist yet.</summary>
@@ -60,6 +77,11 @@ namespace KeepAwake.UI
             }
             _deactivate = new ToolStripMenuItem("Deactivate");
             _deactivate.Click += (s, e) => DeactivateRequested?.Invoke(this, EventArgs.Empty);
+            _options = new ToolStripMenuItem("Options");
+            _optSimulate = OptionItem("Simulate activity", TrayOption.SimulateActivity);
+            _optBattery = OptionItem("Stop when on battery", TrayOption.StopOnBattery);
+            _optLocked = OptionItem("Stop when Windows is locked", TrayOption.StopWhenLocked);
+            _options.DropDownItems.AddRange(new ToolStripItem[] { _optSimulate, _optBattery, _optLocked });
             _theme = new ToolStripMenuItem("Theme");
             foreach (ThemeMode m in Enum.GetValues(typeof(ThemeMode)))
             {
@@ -73,11 +95,36 @@ namespace KeepAwake.UI
 
             _menu.Items.AddRange(new ToolStripItem[]
             {
-                _show, new ToolStripSeparator(), _extend, _deactivate, _theme, new ToolStripSeparator(), _quit,
+                _show, new ToolStripSeparator(), _extend, _deactivate, _options, _theme, new ToolStripSeparator(), _quit,
             });
             _menu.Opening += (s, e) => ApplyThemeToMenu();
             ApplyMenuState();
+            ApplyOptionChecks();
             _icon.ContextMenuStrip = _menu;
+        }
+
+        private ToolStripMenuItem OptionItem(string text, TrayOption option)
+        {
+            var mi = new ToolStripMenuItem(text);
+            mi.Click += (s, e) => OptionRequested?.Invoke(this, option);
+            return mi;
+        }
+
+        /// <summary>Sets the check marks of the Options submenu.</summary>
+        public void SetOptions(bool simulate, bool onBattery, bool locked)
+        {
+            _simulateOn = simulate;
+            _batteryOn = onBattery;
+            _lockedOn = locked;
+            ApplyOptionChecks();
+        }
+
+        private void ApplyOptionChecks()
+        {
+            if (_menu == null) return;
+            _optSimulate.Checked = _simulateOn;
+            _optBattery.Checked = _batteryOn;
+            _optLocked.Checked = _lockedOn;
         }
 
         private static Icon LoadIcon(string name)
@@ -115,13 +162,16 @@ namespace KeepAwake.UI
             if (_menu == null || !_hasState) return;
             _extend.Enabled = _lastActive && !_lastForever;
             _deactivate.Enabled = _lastActive;
+            ApplyOptionChecks();
             foreach (ToolStripMenuItem mi in _theme.DropDownItems)
                 mi.Checked = (ThemeMode)mi.Tag == _lastTheme;
         }
 
-        public void Toast(string title, string text)
+        /// <summary>Shows a balloon. <paramref name="onClick"/> runs if the user clicks that balloon.</summary>
+        public void Toast(string title, string text, Action onClick = null)
         {
             if (_disposed) return;
+            _balloonAction = onClick;
             try { _icon.ShowBalloonTip(6000, title, text, ToolTipIcon.None); } catch { }
         }
 

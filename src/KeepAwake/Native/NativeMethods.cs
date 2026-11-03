@@ -20,6 +20,11 @@ namespace KeepAwake.Native
         public const int WM_DPICHANGED = 0x02E0;
         public const int WM_POWERBROADCAST = 0x0218;
         public const int WM_TIMECHANGE = 0x001E;
+        public const int WM_HOTKEY = 0x0312;
+        public const int WM_MOUSEACTIVATE = 0x0021;
+        public const int MA_ACTIVATEANDEAT = 2;
+        public const int PBT_APMPOWERSTATUSCHANGE = 0x000A;
+        public const uint MOD_NOREPEAT = 0x4000;
         public const int PBT_APMRESUMESUSPEND = 0x0007;
         public const int PBT_APMRESUMEAUTOMATIC = 0x0012;
         public const int ASFW_ANY = -1;
@@ -113,8 +118,17 @@ namespace KeepAwake.Native
         [DllImport("user32.dll")]
         public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint vk);
+
+        [DllImport("user32.dll")]
+        public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
         [DllImport("user32.dll")]
         public static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        public static extern bool EnableWindow(IntPtr hWnd, bool enable);
 
         [DllImport("user32.dll")]
         public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
