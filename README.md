@@ -96,3 +96,9 @@ Released under the [MIT License](LICENSE).
 ## Author
 
 Made by **Karthik**. Feedback and issues welcome on GitHub.
+
+## Project documents
+
+- [Architecture](docs/ARCHITECTURE.md) and [design spec](docs/DESIGN_SPEC.md)
+- [Findings and analysis](docs/FINDINGS.md): decisions, measurements, review outcomes, what is still unverified
+- [Roadmap](docs/ROADMAP.md): what shipped and what is proposed next
