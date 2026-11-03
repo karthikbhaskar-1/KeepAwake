@@ -6,7 +6,7 @@
     <LangVersion>9.0</LangVersion>
     <AssemblyName>KeepAwake</AssemblyName>
     <RootNamespace>KeepAwake</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Karthik</Authors>
     <Product>KeepAwake</Product>
     <Description>Keeps Windows and the screen awake for a chosen time.</Description>
@@ -23,6 +23,10 @@
     <DebugSymbols>false</DebugSymbols>
     <Optimize>true</Optimize>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <InternalsVisibleTo Include="KeepAwake.Tests" />
+  </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources\app.ico" LogicalName="app.ico" />
     <EmbeddedResource Include="Resources\tray_active.ico" LogicalName="tray_active.ico" />

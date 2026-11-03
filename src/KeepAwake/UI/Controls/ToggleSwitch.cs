@@ -14,7 +14,10 @@ namespace KeepAwake.UI.Controls
         public ToggleSwitch()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor, true);
+            SetStyle(ControlStyles.StandardDoubleClick, false);
             BackColor = Color.Transparent;
+            AccessibleRole = AccessibleRole.CheckButton;
+            AccessibleName = "Simulate activity";
             Cursor = Cursors.Hand;
             TabStop = true;
             _anim.Tick += (s, e) =>
@@ -69,9 +72,10 @@ namespace KeepAwake.UI.Controls
             var fill = Painter.Mix(off, p.Accent, _pos);
             if (_hover) fill = Painter.Mix(fill, Color.White, 0.06f);
             using (var b = new SolidBrush(fill)) Painter.FillRoundRect(g, b, r, rad);
-            float knob = r.Height - 6;
-            float x = r.X + 3 + (r.Width - 6 - knob) * _pos;
-            using (var b = new SolidBrush(Color.White)) g.FillEllipse(b, x, r.Y + 3, knob, knob);
+            float inset = 3 * Theme.Scale;
+            float knob = r.Height - 2 * inset;
+            float x = r.X + inset + (r.Width - 2 * inset - knob) * _pos;
+            using (var b = new SolidBrush(Color.White)) g.FillEllipse(b, x, r.Y + inset, knob, knob);
             if (Focused && ShowFocusCues)
                 using (var pen = new Pen(Painter.Alpha(p.Text, 90)))
                     Painter.DrawRoundRect(g, pen, new RectangleF(r.X - 2, r.Y - 2, r.Width + 4, r.Height + 4), rad + 2);

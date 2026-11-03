@@ -15,11 +15,19 @@ namespace KeepAwake.UI.Controls
         public GlyphButton()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor, true);
+            SetStyle(ControlStyles.StandardDoubleClick, false);
             BackColor = Color.Transparent;
             TabStop = false;
+            AccessibleRole = AccessibleRole.PushButton;
         }
 
-        public Glyph Glyph { get; set; }
+        public Glyph Glyph
+        {
+            get => _glyph;
+            set { _glyph = value; AccessibleName = value == Glyph.Close ? "Close" : "Minimize"; }
+        }
+
+        private Glyph _glyph;
 
         protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
         protected override void OnMouseLeave(EventArgs e) { _hover = false; _down = false; Invalidate(); base.OnMouseLeave(e); }
@@ -31,7 +39,7 @@ namespace KeepAwake.UI.Controls
             var g = e.Graphics;
             Painter.Setup(g);
             var p = Theme.Current;
-            float s = DeviceDpi / 96f;
+            float s = Theme.Scale;
             if (_hover)
             {
                 var bg = Glyph == Glyph.Close ? Painter.Alpha(p.Danger, _down ? 70 : 45) : Painter.Alpha(p.Text, _down ? 30 : 18);

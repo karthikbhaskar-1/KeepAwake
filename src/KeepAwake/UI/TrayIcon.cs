@@ -11,8 +11,13 @@ namespace KeepAwake.UI
     {
         private readonly NotifyIcon _icon;
         private readonly Icon _active, _inactive;
-        private readonly ContextMenuStrip _menu;
-        private readonly ToolStripMenuItem _show, _extend, _deactivate, _theme, _quit;
+        private ContextMenuStrip _menu;
+        private ToolStripMenuItem _show, _extend, _deactivate, _theme, _quit;
+
+        private bool _lastActive, _lastForever;
+        private ThemeMode _lastTheme = ThemeMode.System;
+        private string _lastText = "KeepAwake - Inactive";
+        private bool _hasState, _disposed;
 
         public event EventHandler ShowRequested;
         public event EventHandler<DurationOption> ExtendRequested;
@@ -25,6 +30,23 @@ namespace KeepAwake.UI
             _active = LoadIcon("tray_active.ico");
             _inactive = LoadIcon("tray_inactive.ico");
 
+            _icon = new NotifyIcon
+            {
+                Icon = _inactive,
+                Text = _lastText,
+                Visible = true,
+            };
+            // The menu is built on first use (or shortly after start-up), not before the splash.
+            _icon.MouseDown += (s, e) => { if (e.Button == MouseButtons.Right) EnsureMenu(); };
+            _icon.MouseUp += (s, e) => { if (e.Button == MouseButtons.Right) EnsureMenu(); };
+            _icon.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowRequested?.Invoke(this, EventArgs.Empty); };
+            _icon.DoubleClick += (s, e) => ShowRequested?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>Builds the right-click menu if it does not exist yet.</summary>
+        public void EnsureMenu()
+        {
+            if (_menu != null) return;
             _menu = MenuRenderer.CreateMenu();
             _show = new ToolStripMenuItem("Show KeepAwake") { Font = Theme.Font(9.75f, FontStyle.Bold) };
             _show.Click += (s, e) => ShowRequested?.Invoke(this, EventArgs.Empty);
@@ -54,16 +76,8 @@ namespace KeepAwake.UI
                 _show, new ToolStripSeparator(), _extend, _deactivate, _theme, new ToolStripSeparator(), _quit,
             });
             _menu.Opening += (s, e) => ApplyThemeToMenu();
-
-            _icon = new NotifyIcon
-            {
-                Icon = _inactive,
-                Text = "KeepAwake - Inactive",
-                Visible = true,
-                ContextMenuStrip = _menu,
-            };
-            _icon.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowRequested?.Invoke(this, EventArgs.Empty); };
-            _icon.DoubleClick += (s, e) => ShowRequested?.Invoke(this, EventArgs.Empty);
+            ApplyMenuState();
+            _icon.ContextMenuStrip = _menu;
         }
 
         private static Icon LoadIcon(string name)
@@ -76,19 +90,38 @@ namespace KeepAwake.UI
             }
         }
 
+        /// <summary>Refreshes icon, tooltip and menu states. Does nothing for a value that has not changed.</summary>
         public void Update(AwakeController c, ThemeMode theme)
         {
-            _icon.Icon = c.IsActive ? _active : _inactive;
+            if (_disposed) return;
+            bool active = c.IsActive, forever = c.IsForever;
             var text = c.TooltipText();
-            _icon.Text = text.Length > 63 ? text.Substring(0, 63) : text;
-            _extend.Enabled = c.IsActive && !c.IsForever;
-            _deactivate.Enabled = c.IsActive;
+            if (text.Length > 63) text = text.Substring(0, 63);
+
+            if (!_hasState || active != _lastActive) _icon.Icon = active ? _active : _inactive;
+            if (text != _lastText) _icon.Text = text;
+            bool menuChanged = !_hasState || active != _lastActive || forever != _lastForever || theme != _lastTheme;
+
+            _lastActive = active;
+            _lastForever = forever;
+            _lastTheme = theme;
+            _lastText = text;
+            _hasState = true;
+            if (menuChanged) ApplyMenuState();
+        }
+
+        private void ApplyMenuState()
+        {
+            if (_menu == null || !_hasState) return;
+            _extend.Enabled = _lastActive && !_lastForever;
+            _deactivate.Enabled = _lastActive;
             foreach (ToolStripMenuItem mi in _theme.DropDownItems)
-                mi.Checked = (ThemeMode)mi.Tag == theme;
+                mi.Checked = (ThemeMode)mi.Tag == _lastTheme;
         }
 
         public void Toast(string title, string text)
         {
+            if (_disposed) return;
             try { _icon.ShowBalloonTip(6000, title, text, ToolTipIcon.None); } catch { }
         }
 
@@ -99,21 +132,21 @@ namespace KeepAwake.UI
             _menu.ForeColor = p.Text;
             foreach (ToolStripItem it in _menu.Items)
             {
-                it.ForeColor = p.Text;
                 if (it is ToolStripDropDownItem d)
                 {
                     d.DropDown.Renderer = _menu.Renderer;
                     d.DropDown.BackColor = p.Menu;
-                    foreach (ToolStripItem sub in d.DropDownItems) sub.ForeColor = p.Text;
                 }
             }
         }
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
             _icon.Visible = false;
             _icon.Dispose();
-            _menu.Dispose();
+            _menu?.Dispose();
             _active.Dispose();
             _inactive.Dispose();
         }

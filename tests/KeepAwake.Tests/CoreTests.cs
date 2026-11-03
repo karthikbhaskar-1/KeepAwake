@@ -19,6 +19,7 @@ namespace KeepAwake.Tests
         public int HoldCalls { get; private set; }
         public int ReleaseCalls { get; private set; }
         public bool IsDisposed { get; private set; }
+        public bool LastHoldSucceeded { get; set; } = true;
 
         public bool IsHeld
         {
@@ -592,7 +593,7 @@ namespace KeepAwake.Tests
             Directory.CreateDirectory(dir);
             try
             {
-                string resolved = SettingsStore.ResolvePath(dir);
+                string resolved = SettingsStore.ResolvePath(dir, Path.Combine(dir, "fallback", "x.json"));
 
                 Assert.AreEqual(Path.Combine(dir, SettingsStore.FileName), resolved);
             }

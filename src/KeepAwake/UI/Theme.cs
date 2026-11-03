@@ -17,30 +17,46 @@ namespace KeepAwake.UI
     /// <summary>Current palette, following Windows (theme + accent) unless overridden.</summary>
     public static class Theme
     {
-        private static readonly Dictionary<string, Font> Fonts = new Dictionary<string, Font>();
+        private static readonly Dictionary<(float, FontStyle, int), Font> Fonts = new Dictionary<(float, FontStyle, int), Font>();
         private static string _family;
+        private static bool _lastDark = true;
+
+        /// <summary>Effective DPI of the main window. Layout and fonts follow it, so they always scale together.</summary>
+        public static int Dpi { get; set; } = 96;
+
+        public static float Scale => Dpi / 96f;
+
+        public static readonly Color DefaultAccent = Color.FromArgb(0x4F, 0x8C, 0xFF);
+        public static readonly Color Cyan = Color.FromArgb(0x22, 0xD3, 0xEE);
+        private static Color _lastAccent = DefaultAccent;
 
         public static Palette Current { get; private set; } = Build(true, DefaultAccent);
         public static ThemeMode Mode { get; private set; } = ThemeMode.System;
         public static event Action Changed;
 
-        public static readonly Color DefaultAccent = Color.FromArgb(0x4F, 0x8C, 0xFF);
-        public static readonly Color Cyan = Color.FromArgb(0x22, 0xD3, 0xEE);
-
         public static void Apply(ThemeMode mode)
         {
             Mode = mode;
-            Refresh();
+            Refresh(true);
         }
 
-        /// <summary>Re-reads the Windows theme and accent. Safe to call on every WM_SETTINGCHANGE.</summary>
-        public static void Refresh()
+        /// <summary>Re-reads the Windows theme and accent. Raises <see cref="Changed"/> only when something actually changed.</summary>
+        public static void Refresh() => Refresh(false);
+
+        private static void Refresh(bool force)
         {
             bool dark = Mode == ThemeMode.Dark || (Mode == ThemeMode.System && SystemIsDark());
             var accent = SystemAccent();
+            if (!force && dark == _lastDark && accent == _lastAccent) return;
+            _lastDark = dark;
+            _lastAccent = accent;
             Current = Build(dark, accent);
+            Painter.ReleaseCaches();
             Changed?.Invoke();
         }
+
+        /// <summary>The DWM AccentColor registry value is ABGR; this returns the RGB colour.</summary>
+        internal static Color FromAbgr(int abgr) => Color.FromArgb(abgr & 0xFF, (abgr >> 8) & 0xFF, (abgr >> 16) & 0xFF);
 
         public static bool SystemIsDark()
         {
@@ -67,8 +83,7 @@ namespace KeepAwake.UI
                     var v = k?.GetValue("AccentColor");
                     if (v is int abgr)
                     {
-                        var c = Color.FromArgb((abgr) & 0xFF, (abgr >> 8) & 0xFF, (abgr >> 16) & 0xFF);
-                        return EnsureVivid(c);
+                        return EnsureVivid(FromAbgr(abgr));
                     }
                 }
             }
@@ -86,7 +101,7 @@ namespace KeepAwake.UI
             return Painter.FromHsl(h, s, l);
         }
 
-        private static Palette Build(bool dark, Color accent)
+        internal static Palette Build(bool dark, Color accent)
         {
             var accent2 = Painter.FromHsl((accent.GetHue() + 330f) % 360f, Math.Min(1f, accent.GetSaturation() + 0.15f), Math.Min(0.8f, accent.GetBrightness() + 0.05f));
             if (dark)
@@ -155,27 +170,43 @@ namespace KeepAwake.UI
             get
             {
                 if (_family != null) return _family;
-                foreach (var name in new[] { "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI" })
+                _family = "Segoe UI";
+                // Segoe UI Variable ships with Windows 11. Checking the font list first avoids constructing a
+                // FontFamily that throws on Windows 10.
+                if (HasVariableFont())
                 {
                     try
                     {
-                        using (var f = new FontFamily(name))
-                        {
-                            if (string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase)) { _family = name; break; }
-                        }
+                        using (var f = new FontFamily("Segoe UI Variable Display"))
+                            if (string.Equals(f.Name, "Segoe UI Variable Display", StringComparison.OrdinalIgnoreCase))
+                                _family = "Segoe UI Variable Display";
                     }
                     catch { }
                 }
-                return _family ?? (_family = "Segoe UI");
+                return _family;
             }
         }
 
+        private static bool HasVariableFont()
+        {
+            try
+            {
+                using (var k = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"))
+                    return k?.GetValue("Segoe UI Variable (TrueType)") != null;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>A font of the given size in points at 96 DPI, scaled to the current window DPI. Cached.</summary>
         public static Font Font(float pointSize, FontStyle style = FontStyle.Regular)
         {
-            var key = pointSize.ToString("0.0") + "|" + (int)style;
+            var key = (pointSize, style, Dpi);
             if (!Fonts.TryGetValue(key, out var f))
             {
-                f = new Font(FontFamily, pointSize, style, GraphicsUnit.Point);
+                f = new Font(FontFamily, pointSize * Dpi / 72f, style, GraphicsUnit.Pixel);
                 Fonts[key] = f;
             }
             return f;

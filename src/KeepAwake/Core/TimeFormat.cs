@@ -27,13 +27,38 @@ namespace KeepAwake.Core
             minutes = span.Minutes.ToString("00", CultureInfo.InvariantCulture);
         }
 
-        /// <summary>"Thu 12:20" within the last 6 days, else "30 Oct 12:20".</summary>
-        public static string Since(DateTime localTime, DateTime localNow)
+        /// <summary>
+        /// Time left for display: rounds up to the next whole minute so a fresh 8 h session reads "8 h 0 min",
+        /// and shows "under a minute" for the last 60 s.
+        /// </summary>
+        public static string Remaining(TimeSpan remaining)
+        {
+            if (remaining < TimeSpan.FromMinutes(1)) return "under a minute";
+            return Compact(TimeSpan.FromMinutes(Math.Ceiling(remaining.TotalMinutes - 1e-9)));
+        }
+
+        /// <summary>Whole-unit duration without zero trailing units: "8 h", "1 h 30 min", "2 d", "45 min".</summary>
+        public static string Duration(TimeSpan span)
+        {
+            var total = (long)Math.Round(span.TotalMinutes, MidpointRounding.AwayFromZero);
+            if (total <= 0) return "under a minute";
+            long days = total / 1440, hours = total % 1440 / 60, mins = total % 60;
+            var parts = new List<string>(3);
+            if (days > 0) parts.Add(days + " d");
+            if (hours > 0) parts.Add(hours + " h");
+            if (mins > 0) parts.Add(mins + " min");
+            return string.Join(" ", parts);
+        }
+
+        /// <summary>"Thu 12:20" up to 6 days ago, else "30 Oct 12:20".</summary>
+        public static string Since(DateTime localTime, DateTime localNow) => Since(localTime, localNow, CultureInfo.CurrentCulture);
+
+        public static string Since(DateTime localTime, DateTime localNow, CultureInfo culture)
         {
             var age = localNow - localTime;
-            return age.TotalDays < 6
-                ? localTime.ToString("ddd HH:mm", CultureInfo.CurrentCulture)
-                : localTime.ToString("d MMM HH:mm", CultureInfo.CurrentCulture);
+            return age.TotalDays <= 6
+                ? localTime.ToString("ddd HH:mm", culture)
+                : localTime.ToString("d MMM HH:mm", culture);
         }
 
         public static string Clock(DateTime localTime) =>

@@ -18,6 +18,7 @@ namespace KeepAwake.UI.Controls
             BackColor = Color.Transparent;
             Cursor = Cursors.Hand;
             TabStop = true;
+            AccessibleRole = AccessibleRole.PushButton;
         }
 
         public PillKind Kind { get; set; } = PillKind.Primary;
@@ -26,8 +27,23 @@ namespace KeepAwake.UI.Controls
         public float Radius { get; set; } = 12f;
         public event EventHandler ChevronClick;
 
-        private Rectangle ChevronRect => SplitChevron ? new Rectangle(Width - Scale(ChevronWidth), 0, Scale(ChevronWidth), Height) : Rectangle.Empty;
-        private int Scale(int v) => (int)Math.Round(v * DeviceDpi / 96f);
+        private Rectangle ChevronRect => SplitChevron ? new Rectangle(Width - Scale(ChevronWidth, Theme.Dpi), 0, Scale(ChevronWidth, Theme.Dpi), Height) : Rectangle.Empty;
+        private static int Scale(int v, int dpi) => (int)Math.Round(v * dpi / 96f);
+
+        /// <summary>True when a click at <paramref name="p"/> lands on the chevron part of a split button of the given width.</summary>
+        internal static bool IsChevronHit(int width, int dpi, int chevronWidth, Point p)
+        {
+            int w = Scale(chevronWidth, dpi);
+            return p.X >= width - w && p.X < width;
+        }
+
+        protected override void OnTextChanged(EventArgs e)
+        {
+            AccessibleName = Text;
+            base.OnTextChanged(e);
+        }
+
+        protected override bool IsInputKey(Keys keyData) => keyData == Keys.Down || base.IsInputKey(keyData);
 
         protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
         protected override void OnMouseLeave(EventArgs e) { _hover = false; _hoverChevron = false; _down = false; Invalidate(); base.OnMouseLeave(e); }
@@ -43,18 +59,19 @@ namespace KeepAwake.UI.Controls
         protected override void OnMouseUp(MouseEventArgs e)
         {
             _down = false;
-            // Control raises Click after this; remember whether it belongs to the chevron part.
-            _chevronPending = e.Button == MouseButtons.Left && ChevronRect.Contains(e.Location);
             Invalidate();
             base.OnMouseUp(e);
-            _chevronPending = false;
         }
 
-        private bool _chevronPending;
-
+        // WinForms hands a MouseEventArgs to OnClick for mouse clicks, so the chevron decision does not
+        // depend on whether OnClick runs before or after OnMouseUp.
         protected override void OnClick(EventArgs e)
         {
-            if (_chevronPending) { _chevronPending = false; ChevronClick?.Invoke(this, EventArgs.Empty); return; }
+            if (SplitChevron && e is MouseEventArgs me && IsChevronHit(Width, Theme.Dpi, ChevronWidth, me.Location))
+            {
+                ChevronClick?.Invoke(this, EventArgs.Empty);
+                return;
+            }
             base.OnClick(e);
         }
 
@@ -71,7 +88,7 @@ namespace KeepAwake.UI.Controls
             Painter.Setup(g);
             var p = Theme.Current;
             var r = new RectangleF(0.5f, 0.5f, Width - 1, Height - 1);
-            float rad = Radius * DeviceDpi / 96f;
+            float rad = Radius * Theme.Scale;
             float press = _down ? 0.06f : 0f;
 
             if (Kind == PillKind.Primary)
@@ -124,7 +141,7 @@ namespace KeepAwake.UI.Controls
 
         private void DrawContent(Graphics g, Color text, Color chevron)
         {
-            float s = DeviceDpi / 96f;
+            float s = Theme.Scale;
             var textRect = new RectangleF(0, 0, SplitChevron ? Width - ChevronRect.Width : Width, Height);
             var font = Theme.Font(Kind == PillKind.Primary ? 11f : 10.5f, FontStyle.Bold);
             Painter.Text(g, Text, font, text, textRect, StringAlignment.Center);

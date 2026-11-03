@@ -12,7 +12,8 @@ namespace KeepAwake.UI
     public sealed class SplashForm : Form
     {
         private const int TotalMs = 2000, FadeMs = 150;
-        private readonly Stopwatch _clock = Stopwatch.StartNew();
+        private const double MaxOpacity = 0.99;   // exactly 1.0 would drop the layered window style and cause an extra repaint
+        private readonly Stopwatch _clock = new Stopwatch();
         private readonly Timer _timer = new Timer { Interval = 15 };
         private readonly Image _logo;
         private bool _skipped;
@@ -20,20 +21,25 @@ namespace KeepAwake.UI
 
         public SplashForm()
         {
+            Text = "KeepAwake Splash";
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
             ShowInTaskbar = false;
             TopMost = true;
             DoubleBuffered = true;
             AutoScaleMode = AutoScaleMode.None;
-            float scale = DeviceDpi / 96f;
+            float scale = Theme.Scale;
             ClientSize = new Size((int)Math.Round(360 * scale), (int)Math.Round(240 * scale));
             Opacity = 0;
             BackColor = Theme.Current.Bg;
             Cursor = Cursors.Hand;
             _logo = LoadLogo(64);
             _timer.Tick += (s, e) => Step();
-            Click += (s, e) => _skipped = true;
+            Click += (s, e) =>
+            {
+                _skipped = true;
+                if (_timer.Enabled) _timer.Interval = 1;
+            };
         }
 
         public string Version { get; set; } = "1.0.0";
@@ -42,6 +48,17 @@ namespace KeepAwake.UI
         {
             base.OnShown(e);
             WindowChrome.ApplyRoundedCorners(this, 16);
+        }
+
+        /// <summary>
+        /// Starts the fade-in, hold and fade-out. Called once the main window is ready, so the 2 s are
+        /// measured from here and the fade is not eaten by start-up work.
+        /// </summary>
+        public void StartTimeline()
+        {
+            _clock.Restart();
+            _skipOffset = 0;
+            _timer.Interval = 15;
             _timer.Start();
         }
 
@@ -58,9 +75,21 @@ namespace KeepAwake.UI
                 _skipped = false;
                 if (t < TotalMs - FadeMs) { _skipOffset += (TotalMs - FadeMs) - t; t = TotalMs - FadeMs; }
             }
-            if (t < FadeMs) Opacity = t / FadeMs;
-            else if (t < TotalMs - FadeMs) Opacity = 1;
-            else if (t < TotalMs) Opacity = (TotalMs - t) / FadeMs;
+            if (t < FadeMs)
+            {
+                Opacity = Math.Min(MaxOpacity, t / FadeMs);
+            }
+            else if (t < TotalMs - FadeMs)
+            {
+                // Nothing changes during the hold: sleep until it ends instead of ticking every 15 ms.
+                if (Opacity != MaxOpacity) Opacity = MaxOpacity;
+                _timer.Interval = Math.Max(15, (int)(TotalMs - FadeMs - t));
+            }
+            else if (t < TotalMs)
+            {
+                if (_timer.Interval != 15) _timer.Interval = 15;
+                Opacity = Math.Min(MaxOpacity, (TotalMs - t) / FadeMs);
+            }
             else { _timer.Stop(); Close(); }
         }
 
@@ -80,7 +109,7 @@ namespace KeepAwake.UI
             var g = e.Graphics;
             Painter.Setup(g);
             var p = Theme.Current;
-            float s = DeviceDpi / 96f;
+            float s = Theme.Scale;
             var r = ClientRectangle;
             g.Clear(p.Bg);
             Painter.TopGlow(g, r, p.Glow, p.Bg);
@@ -106,7 +135,7 @@ namespace KeepAwake.UI
             Painter.Text(g, "by Karthik", Theme.Font(10.5f), Painter.Mix(p.Text, p.Muted, 0.3f), new RectangleF(0, y, r.Width, 20 * s), StringAlignment.Center);
 
             using (var pen = new Pen(p.CardBorder))
-                Painter.DrawRoundRect(g, pen, new RectangleF(0.5f, 0.5f, r.Width - 1, r.Height - 1), 16 * s);
+                Painter.DrawRoundRect(g, pen, new RectangleF(0.5f, 0.5f, r.Width - 1, r.Height - 1), WindowChrome.CornerRadius * s);
         }
 
         protected override void Dispose(bool disposing)

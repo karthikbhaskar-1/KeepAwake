@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
@@ -8,6 +9,47 @@ namespace KeepAwake.UI
     /// <summary>GDI+ helpers shared by the custom-painted surfaces.</summary>
     public static class Painter
     {
+        private const int MaxCached = 64;
+        private static readonly Dictionary<int, StringFormat> Formats = new Dictionary<int, StringFormat>();
+        private static readonly Dictionary<int, SolidBrush> Brushes = new Dictionary<int, SolidBrush>();
+        private static readonly Dictionary<(string, Font), SizeF> Measured = new Dictionary<(string, Font), SizeF>();
+        private static readonly StringFormat MeasureFormat = new StringFormat(StringFormat.GenericTypographic)
+        {
+            FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces,
+        };
+
+        /// <summary>Drops cached brushes and measurements (call when the palette changes). Formats are kept.</summary>
+        public static void ReleaseCaches()
+        {
+            foreach (var b in Brushes.Values) b.Dispose();
+            Brushes.Clear();
+            Measured.Clear();
+        }
+
+        private static StringFormat GetFormat(StringAlignment h, StringAlignment v, bool noWrap, bool trim)
+        {
+            int key = (int)h | ((int)v << 2) | (noWrap ? 16 : 0) | (trim ? 32 : 0);
+            if (!Formats.TryGetValue(key, out var sf))
+            {
+                sf = new StringFormat { Alignment = h, LineAlignment = v, Trimming = trim ? StringTrimming.EllipsisCharacter : StringTrimming.None };
+                if (noWrap) sf.FormatFlags |= StringFormatFlags.NoWrap;
+                Formats[key] = sf;
+            }
+            return sf;
+        }
+
+        private static SolidBrush GetBrush(Color c)
+        {
+            int key = c.ToArgb();
+            if (!Brushes.TryGetValue(key, out var b))
+            {
+                if (Brushes.Count >= MaxCached) ReleaseCaches();
+                b = new SolidBrush(c);
+                Brushes[key] = b;
+            }
+            return b;
+        }
+
         public static void Setup(Graphics g)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -52,18 +94,17 @@ namespace KeepAwake.UI
         public static void Text(Graphics g, string s, Font f, Color c, RectangleF r,
             StringAlignment h = StringAlignment.Near, StringAlignment v = StringAlignment.Center, bool noWrap = true, bool trim = true)
         {
-            using (var sf = new StringFormat { Alignment = h, LineAlignment = v, Trimming = trim ? StringTrimming.EllipsisCharacter : StringTrimming.None })
-            using (var b = new SolidBrush(c))
-            {
-                if (noWrap) sf.FormatFlags |= StringFormatFlags.NoWrap;
-                g.DrawString(s, f, b, r, sf);
-            }
+            g.DrawString(s, f, GetBrush(c), r, GetFormat(h, v, noWrap, trim));
         }
 
         public static SizeF Measure(Graphics g, string s, Font f)
         {
-            using (var sf = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces })
-                return g.MeasureString(s, f, PointF.Empty, sf);
+            var key = (s, f);
+            if (Measured.TryGetValue(key, out var size)) return size;
+            if (Measured.Count >= MaxCached) Measured.Clear();
+            size = g.MeasureString(s, f, PointF.Empty, MeasureFormat);
+            Measured[key] = size;
+            return size;
         }
 
         public static Color Mix(Color a, Color b, float t)
@@ -105,10 +146,10 @@ namespace KeepAwake.UI
                 path.AddEllipse(ellipse);
                 using (var pgb = new PathGradientBrush(path) { CenterColor = glow, SurroundColors = new[] { bg }, CenterPoint = new PointF(surface.X + surface.Width / 2, surface.Y) })
                 {
-                    var old = g.Clip;
-                    g.SetClip(surface);
+                    var state = g.Save();
+                    g.IntersectClip(surface);
                     g.FillPath(pgb, path);
-                    g.Clip = old;
+                    g.Restore(state);
                 }
             }
         }

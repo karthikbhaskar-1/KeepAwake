@@ -13,8 +13,19 @@ namespace KeepAwake.Core
     /// <summary>Moves the mouse 1 px right then 1 px left so idle detection (Teams, Slack, screensaver) resets.</summary>
     public sealed class MouseNudger : IInputNudger
     {
+        /// <summary>Result of the last SendInput call (number of events injected), for diagnostics.</summary>
+        public uint LastResult { get; private set; }
+
+        /// <summary>The user touched the keyboard or mouse within this window, so a nudge would only be visible jitter.</summary>
+        public const uint UserActiveWindowMs = 50000;
+
+        public static bool ShouldNudge(uint tickCount, uint lastInputTick) =>
+            unchecked(tickCount - lastInputTick) >= UserActiveWindowMs;
+
         public void Nudge()
         {
+            var lii = new NativeMethods.LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf(typeof(NativeMethods.LASTINPUTINFO)) };
+            if (NativeMethods.GetLastInputInfo(ref lii) && !ShouldNudge(unchecked((uint)Environment.TickCount), lii.dwTime)) return;
             var inputs = new NativeMethods.INPUT[2];
             inputs[0].type = NativeMethods.INPUT_MOUSE;
             inputs[0].u.mi.dx = 1;
@@ -22,7 +33,7 @@ namespace KeepAwake.Core
             inputs[1].type = NativeMethods.INPUT_MOUSE;
             inputs[1].u.mi.dx = -1;
             inputs[1].u.mi.dwFlags = NativeMethods.MOUSEEVENTF_MOVE;
-            NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(NativeMethods.INPUT)));
+            LastResult = NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(NativeMethods.INPUT)));
         }
     }
 
@@ -31,10 +42,18 @@ namespace KeepAwake.Core
     {
         private readonly IInputNudger _nudger;
         private readonly TimeSpan _interval;
-        private Timer _timer;
+        private IDisposable _timer;
+        private readonly Func<TimerCallback, TimeSpan, IDisposable> _timerFactory;
 
         public ActivitySimulator(IInputNudger nudger, TimeSpan interval)
+            : this(nudger, interval, null)
         {
+        }
+
+        /// <summary>Lets tests drive the callbacks by hand instead of waiting on a real timer.</summary>
+        internal ActivitySimulator(IInputNudger nudger, TimeSpan interval, Func<TimerCallback, TimeSpan, IDisposable> timerFactory)
+        {
+            _timerFactory = timerFactory ?? ((cb, every) => new Timer(cb, null, every, every));
             _nudger = nudger ?? throw new ArgumentNullException(nameof(nudger));
             _interval = interval;
         }
@@ -44,7 +63,7 @@ namespace KeepAwake.Core
         public void Start()
         {
             if (_timer != null) return;
-            _timer = new Timer(_ => Safe(_nudger.Nudge), null, _interval, _interval);
+            _timer = _timerFactory(_ => Safe(_nudger.Nudge), _interval);
         }
 
         public void Stop()

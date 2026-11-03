@@ -30,8 +30,14 @@ namespace KeepAwake.Core
         public DateTime? EndUtc { get; private set; }
         public TimeSpan? Duration { get; private set; }
 
+        /// <summary>The controller's notion of now (monotonic in the real app).</summary>
+        public DateTime UtcNow => _clock.UtcNow;
+
         public bool IsActive => State == AwakeState.Active;
         public bool IsForever => IsActive && EndUtc == null;
+
+        /// <summary>True while active and Windows refused the execution-state request.</summary>
+        public bool HoldFailed => IsActive && !_hold.LastHoldSucceeded;
 
         public TimeSpan Elapsed => IsActive ? _clock.UtcNow - StartedUtc : TimeSpan.Zero;
 
@@ -110,7 +116,7 @@ namespace KeepAwake.Core
         {
             if (!IsActive) return "KeepAwake - Inactive";
             if (EndUtc == null) return "KeepAwake - Active - forever";
-            return "KeepAwake - Active - " + TimeFormat.Compact(Remaining.Value) + " left";
+            return "KeepAwake - Active - " + TimeFormat.Remaining(Remaining.Value) + " left";
         }
 
         private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;

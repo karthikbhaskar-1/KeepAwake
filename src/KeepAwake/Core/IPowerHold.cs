@@ -8,6 +8,9 @@ namespace KeepAwake.Core
     public interface IPowerHold : IDisposable
     {
         bool IsHeld { get; }
+
+        /// <summary>False when Windows refused the last <see cref="Hold"/> request.</summary>
+        bool LastHoldSucceeded { get; }
         void Hold();
         void Release();
     }
@@ -21,6 +24,9 @@ namespace KeepAwake.Core
         private readonly object _gate = new object();
         private ManualResetEventSlim _release;
         private Thread _thread;
+        private volatile bool _lastHoldSucceeded = true;
+
+        public bool LastHoldSucceeded => _lastHoldSucceeded;
 
         /// <summary>Execution state Windows reported for the hold thread just before the last release (diagnostics and tests).</summary>
         public uint? StateBeforeRelease { get; private set; }
@@ -39,20 +45,21 @@ namespace KeepAwake.Core
                 var ready = new ManualResetEventSlim(false);
                 var t = new Thread(() =>
                 {
-                    NativeMethods.SetThreadExecutionState(
+                    var previous = NativeMethods.SetThreadExecutionState(
                         NativeMethods.ExecutionState.Continuous |
                         NativeMethods.ExecutionState.SystemRequired |
                         NativeMethods.ExecutionState.DisplayRequired);
+                    _lastHoldSucceeded = previous != 0;
                     ready.Set();
                     release.Wait();
                     StateBeforeRelease = (uint)NativeMethods.SetThreadExecutionState(NativeMethods.ExecutionState.Continuous);
-                })
+                }, 64 * 1024)
                 {
                     IsBackground = true,
                     Name = "KeepAwake.PowerHold",
                 };
                 t.Start();
-                ready.Wait(2000);
+                ready.Wait();
                 ready.Dispose();
                 _release = release;
                 _thread = t;
@@ -72,8 +79,7 @@ namespace KeepAwake.Core
             }
             if (t == null) return;
             release.Set();
-            t.Join(2000);
-            release.Dispose();
+            if (t.Join(2000)) release.Dispose();
         }
 
         public void Dispose() => Release();

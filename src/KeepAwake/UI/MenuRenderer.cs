@@ -73,9 +73,9 @@ namespace KeepAwake.UI
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
         {
             bool isChecked = (e.Item as ToolStripMenuItem)?.Checked == true;
-            var color = !e.Item.Enabled ? P.Faint : e.Item.Tag as string == "danger" ? P.Danger : isChecked ? P.Accent : e.Item.ForeColor;
+            var color = !e.Item.Enabled ? P.Faint : e.Item.Tag as string == "danger" ? P.Danger : isChecked ? P.Accent : P.Text;
             e.TextColor = color;
-            if (isChecked) e.TextFont = Theme.Font(e.TextFont.SizeInPoints, FontStyle.Bold);
+            if (isChecked && !e.TextFont.Bold) e.TextFont = Theme.Font(9.75f, FontStyle.Bold);
             e.TextFormat = (e.TextFormat & ~TextFormatFlags.HidePrefix) | TextFormatFlags.NoPrefix;
             base.OnRenderItemText(e);
         }

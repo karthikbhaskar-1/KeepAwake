@@ -17,6 +17,14 @@ namespace KeepAwake.Native
         public const int HT_CAPTION = 0x2;
         public const int WM_SETTINGCHANGE = 0x001A;
         public const int WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320;
+        public const int WM_DPICHANGED = 0x02E0;
+        public const int WM_POWERBROADCAST = 0x0218;
+        public const int WM_TIMECHANGE = 0x001E;
+        public const int PBT_APMRESUMESUSPEND = 0x0007;
+        public const int PBT_APMRESUMEAUTOMATIC = 0x0012;
+        public const int ASFW_ANY = -1;
+        public const uint SWP_NOZORDER = 0x0004;
+        public const uint SWP_NOACTIVATE = 0x0010;
 
         public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
         public const int DWMWCP_ROUND = 2;
@@ -76,6 +84,18 @@ namespace KeepAwake.Native
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int Left, Top, Right, Bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT
+        {
+            public int X, Y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         public struct MARGINS
         {
             public int Left, Right, Top, Bottom;
@@ -104,6 +124,24 @@ namespace KeepAwake.Native
 
         [DllImport("user32.dll")]
         public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool redraw);
+
+        [DllImport("user32.dll")]
+        public static extern bool AllowSetForegroundWindow(int dwProcessId);
+
+        [DllImport("user32.dll")]
+        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+        [DllImport("user32.dll")]
+        public static extern uint GetDpiForWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+
+        [DllImport("shcore.dll")]
+        public static extern int GetDpiForMonitor(IntPtr monitor, int dpiType, out uint dpiX, out uint dpiY);
+
+        [DllImport("gdi32.dll")]
+        public static extern bool DeleteObject(IntPtr obj);
 
         [DllImport("gdi32.dll")]
         public static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int w, int h);
